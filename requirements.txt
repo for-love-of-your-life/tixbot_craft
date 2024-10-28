@@ -1,0 +1,6 @@
+selenium
+pillow
+numpy
+ddddocr
+opencv-python
+onnxruntime
