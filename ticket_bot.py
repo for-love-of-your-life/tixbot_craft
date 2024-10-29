@@ -16,6 +16,9 @@ import numpy as np
 import ddddocr
 import time
 from datetime import datetime
+import requests
+from bs4 import BeautifulSoup
+import re
 
 
 # 設置日誌
@@ -40,6 +43,7 @@ class TixCraftBot:
             self.wait = WebDriverWait(self.driver, 10)
             self.ocr = ddddocr.DdddOcr(beta=True)
             self.select_url = ''
+            self.date_keys = []
             logger.info("瀏覽器初始化成功")
             
         except Exception as e:
@@ -129,100 +133,41 @@ class TixCraftBot:
         
     def go_to_area_selection(self):
         """前往區域選擇頁面"""
-        try:
-            logger.info("正在前往活動頁面...")
-            self.driver.get(self.config["activity_url"])
-            time.sleep(0.2)  # 等待頁面完全載入            
-            
-             # 獲取遊戲容器的位置信息
-            game_container = self.wait.until(
-                EC.presence_of_element_located((By.ID, "game-container"))
-            )
-            
-            # 使用 JavaScript 直接滾動到遊戲容器的位置
-            self.driver.execute_script("window.scrollTo(0, arguments[0].offsetTop);", game_container)
-            time.sleep(0.3)  # 等待滾動完成
-            
-             # 獲取目標日期
-            target_date = self.config["date"]
-            max_retries = 3  # 定義重試次數
-            retry_count = 0
-            
-            while retry_count < max_retries:
-                found_button = False  # 每次進入循環時重置標記
+        concertName = re.search(r"(?<=game/)[^/]+", self.config["activity_url"]).group(0)
 
-                try:
-                    # 等待日期行加載完成
-                    date_rows = self.wait.until(
-                        EC.presence_of_all_elements_located((By.XPATH, "//tr[contains(@class, 'gridc fcTxt')]"))
-                    )
+        # 先找是否有符合的date
+        matched = False
+        matched_value = None
+        for item in self.date_keys:
+            if item["date"] == self.config["date"] and not item["tag"]:
+                item["tag"] = True  # 找到符合條件的項目後設定 tag 為 True
+                matched = True
+                matched_value = item["value"]
+                break
+    
+        # 若找不到符合日期的項目，再從第一個未標記的項目開始找
+        if not matched:
+            for item in self.date_keys:
+                if not item["tag"]:
+                    item["tag"] = True
+                    matched_value = item["value"]
+                    matched = True
+                    break
+        
+        if matched:
+            # 符合則前往頁面
+            selected_url = f"https://tixcraft.com/ticket/area/{concertName}/{matched_value}"
+            self.driver.get(f"https://tixcraft.com/ticket/area/{concertName}/{matched_value}")
+            time.sleep(.2)
 
-                    for row in date_rows:
-                        date_cell = row.find_element(By.XPATH, ".//td[1]")
-                        date_text = date_cell.text.strip()
-                        date_only = date_text.split(" ")[0]
-
-                        logger.info(f"檢查日期: {date_text}")
-
-                        if date_only == target_date:
-                            logger.info(f"找到目標日期: {target_date}，正在點擊立即訂購按鈕...")
-
-                            # 找到「立即訂購」按鈕並嘗試點擊
-                            order_button = row.find_element(By.XPATH, ".//button[contains(text(), '立即訂購')]")
-                            
-                            # 檢查是否顯示「選購一空」
-                            if "選購一空" in row.text:
-                                logger.info(f"日期 {target_date} 座位已售完，嘗試點擊其他可用按鈕...")
-                                # 尋找其他可用的按鈕
-                                available_buttons = self.driver.find_elements(By.XPATH, "//button[contains(text(), '立即訂購')]")
-                                for button in available_buttons:
-                                     # 確保按鈕可用且顯示，且不是在當前行的“選購一空”按鈕
-                                    if button.is_enabled() and button.is_displayed() and "選購一空" not in button.find_element(By.XPATH, "..").text:
-                                        logger.info("點擊其他可用按鈕...")
-                                        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
-                                        time.sleep(0.5)  # 確保滾動完成
-                                        button.click()
-                                        logger.info("成功點擊其他可用按鈕")
-                                        found_button = True
-                                        return True  # 找到並點擊可用按鈕後返回
-
-                            else:
-                                # 滾動到按鈕位置，並點擊
-                                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", order_button)
-                                time.sleep(0.5)  # 確保滾動完成
-                                order_button.click()
-                                logger.info("成功點擊立即訂購按鈕")
-
-                                # 檢查頁面是否跳轉
-                                if self.check_page_transition():
-                                    logger.info("成功跳轉到下一頁面")
-                                    return True
-                                else:
-                                    logger.warning("點擊後未能成功跳轉，重試中...")
-
-                    # 如果沒有找到可用按鈕，則刷新頁面並保持當前位置
-                    if not found_button:
-                        logger.info("未找到可用的按鈕，正在刷新頁面並保持當前位置...")
-                        current_position = self.driver.execute_script("return window.scrollY;")  # 获取当前滚动位置
-                        self.driver.refresh()  # 刷新页面
-                        self.driver.execute_script(f"window.scrollTo(0, {current_position});")  # 恢复滚动位置
-
-                except Exception as e:
-                    logger.error(f"點擊立即訂購按鈕失敗: {str(e)}")
-                    current_position = self.driver.execute_script("return window.scrollY;")  # 获取当前滚动位置
-                    self.driver.refresh()
-                    self.driver.execute_script(f"window.scrollTo(0, {current_position});")  # 恢复滚动位置
-
-                retry_count += 1
-                time.sleep(0.1)  # 在重試之前等待1秒
-
-            logger.error(f"未找到目標日期或無法點擊立即訂購按鈕，達到最大重試次數: {max_retries}")
-            self.run()
-            return False
-
-        except Exception as e:
-            logger.error(f"前往區域選擇頁面失敗: {str(e)}")
-            raise
+            if self.driver.current_url != selected_url:
+                # 若被轉址則重跑
+                self.go_to_area_selection()
+        else:
+            for item in self.date_keys:
+                if item["tag"]:
+                    item["tag"] = False
+            self.go_to_area_selection()
         
     def check_page_transition(self):
         """檢查頁面是否跳轉"""
@@ -446,92 +391,121 @@ class TixCraftBot:
 
 
     def run(self):
-        """执行抢票流程"""
-        try:
-            if not self.go_to_area_selection():
-                logger.error("无法进入区域选择页面")
-                return
+        self.go_to_area_selection()
+        # """执行抢票流程"""
+        # try:
+        #     if not self.go_to_area_selection():
+        #         logger.error("无法进入区域选择页面")
+        #         return
                 
-            retry_count = 0
-            if self.select_area():
-                try:
-                    alert = None
-                    alert = WebDriverWait(self.driver, 1).until(EC.alert_is_present())
-                except Exception as e:
-                    print(e)
+        #     retry_count = 0
+        #     if self.select_area():
+        #         try:
+        #             alert = None
+        #             alert = WebDriverWait(self.driver, 1).until(EC.alert_is_present())
+        #         except Exception as e:
+        #             print(e)
 
-                if alert:
-                    alert.accept()
-                    self.driver.get(self.select_url)
-                    self.select_area()
-                else:
-                    while True:
-                        retry_count += 1
-                        logger.info(f"第 {retry_count} 次尝试")
-                        if self.select_ticket_quantity():
-                            # 在这里获取验证码图片的路径，假设你已经有一个方法获取验证码图片
-                            captcha_image_path = self.get_captcha_image_path()  # 替换为你的获取验证码图片的逻辑
-                            if captcha_image_path and self.handle_captcha(captcha_image_path):  # 传递验证码图片路径
-                                try:
-                                    alert = None
-                                    alert = WebDriverWait(self.driver, 10).until(EC.alert_is_present())
-                                except Exception as e:
-                                    print(e)
+        #         if alert:
+        #             alert.accept()
+        #             self.driver.get(self.select_url)
+        #             self.select_area()
+        #         else:
+        #             while True:
+        #                 retry_count += 1
+        #                 logger.info(f"第 {retry_count} 次尝试")
+        #                 if self.select_ticket_quantity():
+        #                     # 在这里获取验证码图片的路径，假设你已经有一个方法获取验证码图片
+        #                     captcha_image_path = self.get_captcha_image_path()  # 替换为你的获取验证码图片的逻辑
+        #                     if captcha_image_path and self.handle_captcha(captcha_image_path):  # 传递验证码图片路径
+        #                         try:
+        #                             alert = None
+        #                             alert = WebDriverWait(self.driver, 10).until(EC.alert_is_present())
+        #                         except Exception as e:
+        #                             print(e)
 
-                                if alert:
-                                    logger.info(f"Alert found: {alert.text}")
-                                    if alert.text == "此場次/區域已售完":
-                                        # 重跑
-                                        alert.accept()
-                                        self.driver.get(self.select_url)
-                                        self.select_area()
-                                    elif alert.text == '您所輸入的驗證碼不正確，請重新輸入':
-                                        alert.accept()
-                                    else:
-                                        alert.accept()
-                                        self.driver.get(self.select_url)
-                                        self.select_area()
-                                else:
-                                    # if 抓到 cancelTimeCountdown 則需要跑run 方法
-                                    try:
-                                        # 設定等待時間（比如 10 秒）
-                                        WebDriverWait(self.driver, 60).until(
-                                            EC.presence_of_element_located((By.ID, "cancelTimeCountdown"))
-                                        )
-                                        print('驗證碼輸入正確，請記得付款')
-                                    except TimeoutException:
-                                        print("Timed out waiting for element to load")
-                                        return None
-                                    break
+        #                         if alert:
+        #                             logger.info(f"Alert found: {alert.text}")
+        #                             if alert.text == "此場次/區域已售完":
+        #                                 # 重跑
+        #                                 alert.accept()
+        #                                 self.driver.get(self.select_url)
+        #                                 self.select_area()
+        #                             elif alert.text == '您所輸入的驗證碼不正確，請重新輸入':
+        #                                 alert.accept()
+        #                             else:
+        #                                 alert.accept()
+        #                                 self.driver.get(self.select_url)
+        #                                 self.select_area()
+        #                         else:
+        #                             # if 抓到 cancelTimeCountdown 則需要跑run 方法
+        #                             try:
+        #                                 # 設定等待時間（比如 10 秒）
+        #                                 WebDriverWait(self.driver, 60).until(
+        #                                     EC.presence_of_element_located((By.ID, "cancelTimeCountdown"))
+        #                                 )
+        #                                 print('驗證碼輸入正確，請記得付款')
+        #                             except TimeoutException:
+        #                                 print("Timed out waiting for element to load")
+        #                                 return None
+        #                             break
                         
-                        if retry_count == 5:
-                            self.run()
-                    time.sleep(self.config["refresh_interval"])
-
+        #                 if retry_count == 5:
+        #                     self.run()
+        #             time.sleep(self.config["refresh_interval"])
                 
-        except KeyboardInterrupt:
-            logger.info("程序已被用户中断")
-        except Exception as e:
-            print(e)
-            logger.error(f"抢票过程中发生错误: {str(e)}")
-        finally:
-            print("\n按 Enter 键结束程序...")
-            input()
-            self.driver.quit()
+        # except KeyboardInterrupt:
+        #     logger.info("程序已被用户中断")
+        # except Exception as e:
+        #     print(e)
+        #     logger.error(f"抢票过程中发生错误: {str(e)}")
+        # finally:
+        #     print("\n按 Enter 键结束程序...")
+        #     input()
+        #     self.driver.quit()
+            
+
+    def getAllDate(self):
+        url = self.config["activity_url"]
+        # 設定user agent
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            date_pattern = re.compile(r"\d{4}/\d{2}/\d{2}")
+            date_keys = []
+            for tr in soup.select("tr.gridc.fcTxt"):
+                data_key = tr.get("data-key")
+                if data_key:
+                    # 從第一個 `td` 取得日期資訊並提取日期部分
+                    date_text = tr.select_one("td").get_text(strip=True)
+                    date_match = date_pattern.search(date_text)
+                    date = date_match.group(0) if date_match else ""
+                    # 存入所需格式
+                    date_keys.append({"value": data_key, "tag": False, "date": date})
+            # 取得所有天數
+            self.date_keys = date_keys
+            print(f"取得天數成功: {date_keys}")
+        else:
+            print(f"無法訪問頁面，狀態碼: {response.status_code}")
 
 if __name__ == "__main__":
     bot = TixCraftBot()
-    while True:
-        now = datetime.now()
-        # 檢查時間是否達到 3 點 0 分 1 秒
-        if now.hour == 15 and now.minute >= 00 and now.second >= 1:
-            try:
-                bot.run()
-            except Exception as e:
-                logger.error(f"程式執行失敗: {str(e)}")
-                input("\n按 Enter 鍵結束程式...")
-            # 等待一天後再檢查，以免在當天重複執行
-            time.sleep(86400)  # 86400 秒 = 24 小時
-        else:
-            # 確保每秒檢查一次，避免錯過目標時間
-            time.sleep(0.2)
+    bot.getAllDate()
+    bot.run()
+    # while True:
+    #     now = datetime.now()
+    #     # 檢查時間是否達到 3 點 0 分 1 秒
+    #     if now.hour == 15 and now.minute >= 00 and now.second >= 1:
+    #         try:
+    #             bot.run()
+    #         except Exception as e:
+    #             logger.error(f"程式執行失敗: {str(e)}")
+    #             input("\n按 Enter 鍵結束程式...")
+    #         # 等待一天後再檢查，以免在當天重複執行
+    #         time.sleep(86400)  # 86400 秒 = 24 小時
+    #     else:
+    #         # 確保每秒檢查一次，避免錯過目標時間
+    #         time.sleep(0.2)
