@@ -58,19 +58,11 @@ class TixCraftBot:
                 return config
         except FileNotFoundError:
             logger.warning("找不到配置文件，創建默認配置")
-            default_config = {
-                "activity_url": "https://tixcraft.com/activity/game/24_straykids",
-                "ticket_quantity": 2,
-                "target_price": "4800",
-                "refresh_interval": 0.2
-            }
-            with open('config.json', 'w', encoding='utf-8') as f:
-                json.dump(default_config, f, indent=4, ensure_ascii=False)
             print("請先設定 config.json 中的配置信息")
             input("按 Enter 鍵結束程式...")
             sys.exit(1)
 
-    def find_and_click_button(self, possible_selectors):
+    def find_and_click_button(self, possible_selectors, notToggle):
         """嘗試多個可能的選擇器來找到並點擊按鈕"""
         for selector_type, selector_value in possible_selectors:
             try:
@@ -81,39 +73,11 @@ class TixCraftBot:
                 for element in elements:
                     if element.is_displayed() and element.is_enabled():
 
-                        # 滾動到元素
-                        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-                        time.sleep(0.5)  # 等待滾動完成
+                        if not notToggle:
+                            # 滾動到元素
+                            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+                            time.sleep(0.5)  # 等待滾動完成
 
-
-                        button_text = element.text
-                        logger.info(f"找到按鈕: {button_text}")
-
-                    
-                        # 只點擊包含「立即購票」或「購票」的按鈕
-                        if "立即訂購" in button_text:
-                            logger.info("點擊購票按鈕")
-                            element.click()
-                            return True
-                        # 點擊「確認張數」按鈕
-                        elif "確認張數" in button_text:
-                            logger.info("點擊確認張數按鈕")
-                            element.click()
-                            return True
-            except Exception:
-                continue
-        return False
-    
-    def find_and_click_button_second(self, possible_selectors):
-        """嘗試多個可能的選擇器來找到並點擊按鈕"""
-        for selector_type, selector_value in possible_selectors:
-            try:
-                logger.info(f"嘗試找尋按鈕: {selector_value}")
-                elements = self.wait.until(
-                    EC.presence_of_all_elements_located((selector_type, selector_value))
-                )
-                for element in elements:
-                    if element.is_displayed() and element.is_enabled():
                         button_text = element.text
                         logger.info(f"找到按鈕: {button_text}")
                     
@@ -201,8 +165,6 @@ class TixCraftBot:
             logger.info("開始滾動查找票價區域...")
             
             found_available_area = False  # 用于跟踪是否找到可用区域
-
-
             while current_scroll <= total_height:
                 area_lists = self.driver.find_elements(By.CLASS_NAME, "area-list")
 
@@ -274,15 +236,6 @@ class TixCraftBot:
     def select_ticket_quantity(self):
         """選擇票數"""
         try:
-            # 等待驗證碼輸入框
-            verify_code_input = self.wait.until(
-                EC.presence_of_element_located((By.ID, "TicketForm_verifyCode"))
-            )
-
-            # 滾動到驗證碼輸入框
-            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", verify_code_input)
-            time.sleep(0.3)  # 等待滾動完成
-            
             possible_selectors = [
                 (By.XPATH, "//select[starts-with(@id, 'TicketForm_ticketPrice_')]"),
                 (By.CSS_SELECTOR, "select[name^='TicketForm[ticketPrice]']"),
@@ -340,7 +293,7 @@ class TixCraftBot:
             logger.error(f"選擇票數失敗: {str(e)}")
             return False
 
-    def handle_captcha(self, image_path):
+    def handle_captcha(self):
         """处理验证码的获取和识别过程"""
         try:
             image = open("captcha_image.png", "rb").read()
@@ -352,7 +305,7 @@ class TixCraftBot:
                     (By.CLASS_NAME, "btn-primary"),  # 根據 class 名稱
                     (By.XPATH, "//button[contains(text(), '確認張數')]")
                 ]
-                self.find_and_click_button_second(possible_selectors)
+                self.find_and_click_button(possible_selectors, notToggle=True)
                 return True
             else:
                 logger.error("验证码识别失败，请重试")
@@ -389,82 +342,57 @@ class TixCraftBot:
             logger.error(f"获取验证码图片时发生错误: {str(e)}")
             return None
 
+    def run(self, reRun):
+        if not reRun:
+            self.go_to_area_selection() # 進入到選位頁面
 
-    def run(self):
-        self.go_to_area_selection()
-        # """执行抢票流程"""
-        # try:
-        #     if not self.go_to_area_selection():
-        #         logger.error("无法进入区域选择页面")
-        #         return
-                
-        #     retry_count = 0
-        #     if self.select_area():
-        #         try:
-        #             alert = None
-        #             alert = WebDriverWait(self.driver, 1).until(EC.alert_is_present())
-        #         except Exception as e:
-        #             print(e)
+        try:
+            retry_count = 0
+            if self.select_area():
+                try:
+                    alert = None
+                    alert = WebDriverWait(self.driver, 1).until(EC.alert_is_present())
+                except Exception as e:
+                    print(e)
 
-        #         if alert:
-        #             alert.accept()
-        #             self.driver.get(self.select_url)
-        #             self.select_area()
-        #         else:
-        #             while True:
-        #                 retry_count += 1
-        #                 logger.info(f"第 {retry_count} 次尝试")
-        #                 if self.select_ticket_quantity():
-        #                     # 在这里获取验证码图片的路径，假设你已经有一个方法获取验证码图片
-        #                     captcha_image_path = self.get_captcha_image_path()  # 替换为你的获取验证码图片的逻辑
-        #                     if captcha_image_path and self.handle_captcha(captcha_image_path):  # 传递验证码图片路径
-        #                         try:
-        #                             alert = None
-        #                             alert = WebDriverWait(self.driver, 10).until(EC.alert_is_present())
-        #                         except Exception as e:
-        #                             print(e)
+                if alert:
+                    self.reload(alert=alert)
+                else:
+                    while True:
+                        retry_count += 1
+                        logger.info(f"第 {retry_count} 次尝试")
+                        if self.select_ticket_quantity():
+                            # 在这里获取验证码图片的路径，假设你已经有一个方法获取验证码图片
+                            captcha_image_path = self.get_captcha_image_path()  # 替换为你的获取验证码图片的逻辑
+                            if captcha_image_path and self.handle_captcha():  # 传递验证码图片路径
+                                try:
+                                    alert = None
+                                    alert = WebDriverWait(self.driver, 10).until(EC.alert_is_present())
+                                except Exception as e:
+                                    print(e)
 
-        #                         if alert:
-        #                             logger.info(f"Alert found: {alert.text}")
-        #                             if alert.text == "此場次/區域已售完":
-        #                                 # 重跑
-        #                                 alert.accept()
-        #                                 self.driver.get(self.select_url)
-        #                                 self.select_area()
-        #                             elif alert.text == '您所輸入的驗證碼不正確，請重新輸入':
-        #                                 alert.accept()
-        #                             else:
-        #                                 alert.accept()
-        #                                 self.driver.get(self.select_url)
-        #                                 self.select_area()
-        #                         else:
-        #                             # if 抓到 cancelTimeCountdown 則需要跑run 方法
-        #                             try:
-        #                                 # 設定等待時間（比如 10 秒）
-        #                                 WebDriverWait(self.driver, 60).until(
-        #                                     EC.presence_of_element_located((By.ID, "cancelTimeCountdown"))
-        #                                 )
-        #                                 print('驗證碼輸入正確，請記得付款')
-        #                             except TimeoutException:
-        #                                 print("Timed out waiting for element to load")
-        #                                 return None
-        #                             break
-                        
-        #                 if retry_count == 5:
-        #                     self.run()
-        #             time.sleep(self.config["refresh_interval"])
-                
-        # except KeyboardInterrupt:
-        #     logger.info("程序已被用户中断")
-        # except Exception as e:
-        #     print(e)
-        #     logger.error(f"抢票过程中发生错误: {str(e)}")
-        # finally:
-        #     print("\n按 Enter 键结束程序...")
-        #     input()
-        #     self.driver.quit()
+                                if alert:
+                                    logger.info(f"Alert found: {alert.text}")
+                                    if alert.text == "此場次/區域已售完":
+                                        # 重跑
+                                        self.reload(alert=alert)
+                                    elif alert.text == '您所輸入的驗證碼不正確，請重新輸入':
+                                        alert.accept()
+                                    else:
+                                        self.reload(alert=alert)
+                                else:
+                                    # 成功
+                                    break
+        except KeyboardInterrupt:
+            logger.info("程序已被用户中断")
+        except Exception as e:
+            print(e)
+            logger.error(f"抢票过程中发生错误: {str(e)}")
+        finally:
+            print("\n按 Enter 键结束程序...")
+            input()
+            self.driver.quit()
             
-
     def getAllDate(self):
         url = self.config["activity_url"]
         # 設定user agent
@@ -484,28 +412,34 @@ class TixCraftBot:
                     date_match = date_pattern.search(date_text)
                     date = date_match.group(0) if date_match else ""
                     # 存入所需格式
-                    date_keys.append({"value": data_key, "tag": False, "date": date})
+                    date_keys.append({"value": data_key, "tag": True, "date": date})
             # 取得所有天數
             self.date_keys = date_keys
             print(f"取得天數成功: {date_keys}")
         else:
             print(f"無法訪問頁面，狀態碼: {response.status_code}")
 
+    def reload(self, alert):
+        alert.accept()
+        self.driver.get(self.select_url)
+        self.run(reRun=True)
+
 if __name__ == "__main__":
     bot = TixCraftBot()
     bot.getAllDate()
-    bot.run()
-    # while True:
-    #     now = datetime.now()
-    #     # 檢查時間是否達到 3 點 0 分 1 秒
-    #     if now.hour == 15 and now.minute >= 00 and now.second >= 1:
-    #         try:
-    #             bot.run()
-    #         except Exception as e:
-    #             logger.error(f"程式執行失敗: {str(e)}")
-    #             input("\n按 Enter 鍵結束程式...")
-    #         # 等待一天後再檢查，以免在當天重複執行
-    #         time.sleep(86400)  # 86400 秒 = 24 小時
-    #     else:
-    #         # 確保每秒檢查一次，避免錯過目標時間
-    #         time.sleep(0.2)
+    bot.run(reRun=False)
+
+    while True:
+        now = datetime.now()
+        # 檢查時間是否達到 3 點 0 分 1 秒
+        if now.hour == 15 and now.minute >= 00 and now.second >= 1:
+            try:
+                bot.run()
+            except Exception as e:
+                logger.error(f"程式執行失敗: {str(e)}")
+                input("\n按 Enter 鍵結束程式...")
+            # 等待一天後再檢查，以免在當天重複執行
+            time.sleep(86400)  # 86400 秒 = 24 小時
+        else:
+            # 確保每秒檢查一次，避免錯過目標時間
+            time.sleep(0.2)
