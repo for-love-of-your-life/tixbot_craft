@@ -305,7 +305,7 @@ class TixCraftBot:
                     (By.CLASS_NAME, "btn-primary"),  # 根據 class 名稱
                     (By.XPATH, "//button[contains(text(), '確認張數')]")
                 ]
-                self.find_and_click_button(possible_selectors, notToggle=True)
+                self.find_and_click_button(possible_selectors, notToggle=False)
                 return True
             else:
                 logger.error("验证码识别失败，请重试")
@@ -427,14 +427,13 @@ class TixCraftBot:
 if __name__ == "__main__":
     bot = TixCraftBot()
     bot.getAllDate()
-    bot.run(reRun=False)
 
     while True:
         now = datetime.now()
         # 檢查時間是否達到 3 點 0 分 1 秒
-        if now.hour == 15 and now.minute >= 00 and now.second >= 1:
+        if now.hour == 23 and now.minute >= 37 and now.second >= 1:
             try:
-                bot.run()
+                bot.run(reRun=False)
             except Exception as e:
                 logger.error(f"程式執行失敗: {str(e)}")
                 input("\n按 Enter 鍵結束程式...")
