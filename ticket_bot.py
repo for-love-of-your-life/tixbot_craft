@@ -16,6 +16,7 @@ import re
 import aiohttp
 import asyncio
 from itertools import islice
+import threading
 
 # 設置日誌
 logging.basicConfig(
@@ -211,6 +212,16 @@ class TixCraftBot:
                         if alert.text == '您所輸入的驗證碼不正確，請重新輸入':
                             alert.accept()
 
+    def find_lineup_params(self, response):
+        soup = BeautifulSoup(response, "html.parser")
+        csrf = soup.find(id='form-ticket-ticket').find(attrs={"name": "_csrf"}).get('value')
+        amount = soup.find(id="TicketForm_ticketPrice_02").find_all('option')[-1].get('value')
+        agree = 1
+        captcha_img = soup.find(id="TicketForm_verifyCode-image").get('src')
+        captcha_img_url = f"https://tixcraft.com{captcha_img}"
+        
+        print(captcha_img_url)
+
     async def run(self):
         tasks = []
         for item in self.date_keys:
@@ -234,49 +245,22 @@ class TixCraftBot:
                         area_url_list = json.loads(area_url_list_json)
 
                         # 從哪邊開始抓
-                        maxSeatsHandle = list(islice(area_url_list.items(), 1))
-
-                        founded = False
-                        for key, url in maxSeatsHandle:  # 使用 items() 來獲取鍵值對
+                        maxSeatsHandle = list(islice(area_url_list.items(), 2))
+                        
+                        seatsTasks = []
+                        for key, url in maxSeatsHandle:
                             element = soup.find(id=key)
                             seat_price = element.get_text().split()[1]
 
                             if seat_price <= self.config['target_price']:
-                                self.driver.get(url)
-                                try:
-                                    alert = None
-                                    alert = WebDriverWait(self.driver, 1).until(EC.alert_is_present())
-                                except Exception as e:
-                                    print(e)
-
-                                if alert:
-                                    continue
-                                else:
-                                    founded = True
-                                    self.ticket_page()
+                                print(url)
+                        #         task = asyncio.create_task(self.apiRequest(url=url))
+                        #         seatsTasks.append(task)
+                                                    
+                        # seatsResponses = await asyncio.gather(*seatsTasks)
+                        # for isSuccess, response in seatsResponses:
+                        #     self.find_lineup_params(response=response)
                         
-                        if not founded:
-                            for key, url in maxSeatsHandle:  # 使用 items() 來獲取鍵值對
-                                element = soup.find(id=key)
-                                seat_price = element.get_text().split()[1]
-
-                                if seat_price > self.config['target_price']:
-                                    self.driver.get(url)
-                                    try:
-                                        alert = None
-                                        alert = WebDriverWait(self.driver, 1).until(EC.alert_is_present())
-                                    except Exception as e:
-                                        print(e)
-
-                                    if alert:
-                                        continue
-                                    else:
-                                        founded = True
-                                        self.ticket_page()
-                        if not founded:
-                            break
-                        
-
                     else:
                         print("未找到 areaUrlList。")
             else:
@@ -289,7 +273,7 @@ class TixCraftBot:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
-                    print(f"{url}請求成功")
+                    # print(f"{url}請求成功")
                     return True, await response.text()  # 取得響應內容
                 else:
                     print(f"{url}請求失敗")
