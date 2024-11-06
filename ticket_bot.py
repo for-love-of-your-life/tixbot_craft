@@ -16,7 +16,8 @@ import re
 import aiohttp
 import asyncio
 from itertools import islice
-import threading
+import requests
+import os
 
 # 設置日誌
 logging.basicConfig(
@@ -212,16 +213,50 @@ class TixCraftBot:
                         if alert.text == '您所輸入的驗證碼不正確，請重新輸入':
                             alert.accept()
 
-    def find_lineup_params(self, response):
-        soup = BeautifulSoup(response, "html.parser")
-        csrf = soup.find(id='form-ticket-ticket').find(attrs={"name": "_csrf"}).get('value')
-        amount = soup.find(id="TicketForm_ticketPrice_02").find_all('option')[-1].get('value')
-        agree = 1
+    def clear_image_folder(self):
+        folder = "image"
+        if os.path.exists(folder):
+            for filename in os.listdir(folder):
+                file_path = os.path.join(folder, filename)
+                try:
+                    if os.path.isfile(file_path) or os.path.islink(file_path):
+                        os.unlink(file_path)  # 刪除檔案或連結
+                    elif os.path.isdir(file_path):
+                        os.rmdir(file_path)  # 刪除空的子資料夾
+                except Exception as e:
+                    print(f"刪除 {file_path} 時發生錯誤: {e}")
+
+    def downloadImage(self, soup):
+        if not os.path.exists("image"):
+            os.makedirs("image")
+
         captcha_img = soup.find(id="TicketForm_verifyCode-image").get('src')
         captcha_img_url = f"https://tixcraft.com{captcha_img}"
-        
-        print(captcha_img_url)
+        v_value = captcha_img.split("v=")[-1].split(".")[0]
+        filename = os.path.join("image", f"{v_value}.png")
 
+        response = requests.get(captcha_img_url)
+        response.raise_for_status()
+
+        with open(filename, 'wb') as f:
+            f.write(response.content)
+        
+        return filename
+
+    def find_lineup_params(self, response):
+        soup = BeautifulSoup(response, "html.parser")
+        choose = soup.find(class_="form-select mobile-select")
+        image = open(self.downloadImage(soup=soup), "rb").read()
+
+        csrf = soup.find(id='form-ticket-ticket').find(attrs={"name": "_csrf"}).get('value')
+        ticketPrice = choose.find_all('option')[-1].get('value')
+        priceSize = 1
+        agree = 1
+        nums = choose.get('id').split("TicketForm_ticketPrice_")[1]
+
+        verifyCode = self.ocr.classification(image)
+        print(verifyCode)
+        
     async def run(self):
         tasks = []
         for item in self.date_keys:
@@ -245,7 +280,7 @@ class TixCraftBot:
                         area_url_list = json.loads(area_url_list_json)
 
                         # 從哪邊開始抓
-                        maxSeatsHandle = list(islice(area_url_list.items(), 2))
+                        maxSeatsHandle = list(islice(area_url_list.items(), 3))
                         
                         seatsTasks = []
                         for key, url in maxSeatsHandle:
@@ -254,12 +289,12 @@ class TixCraftBot:
 
                             if seat_price <= self.config['target_price']:
                                 print(url)
-                        #         task = asyncio.create_task(self.apiRequest(url=url))
-                        #         seatsTasks.append(task)
+                                task = asyncio.create_task(self.apiRequest(url=url))
+                                seatsTasks.append(task)
                                                     
-                        # seatsResponses = await asyncio.gather(*seatsTasks)
-                        # for isSuccess, response in seatsResponses:
-                        #     self.find_lineup_params(response=response)
+                        seatsResponses = await asyncio.gather(*seatsTasks)
+                        for isSuccess, response in seatsResponses:
+                            self.find_lineup_params(response=response)
                         
                     else:
                         print("未找到 areaUrlList。")
@@ -304,6 +339,7 @@ class TixCraftBot:
 
 if __name__ == "__main__":
     bot = TixCraftBot()
+    bot.clear_image_folder()
     asyncio.run(bot.getAllDate())
     asyncio.run(bot.run())
 
