@@ -225,8 +225,18 @@ class TixCraftBot:
                         os.rmdir(file_path)  # 刪除空的子資料夾
                 except Exception as e:
                     print(f"刪除 {file_path} 時發生錯誤: {e}")
+    
+    async def handleTicketPage(self, url):
+        try:
+            isSuccess, response = await self.apiRequest(url=url)
+            if isSuccess:
+                await self.find_lineup_params(response=response)
+            else:
+                print(f"Failed to process {url}")
+        except Exception as e:
+            print(f"Error processing {url}: {e}")
 
-    def downloadImage(self, soup):
+    async def downloadImage(self, soup):
         if not os.path.exists("image"):
             os.makedirs("image")
 
@@ -235,18 +245,22 @@ class TixCraftBot:
         v_value = captcha_img.split("v=")[-1].split(".")[0]
         filename = os.path.join("image", f"{v_value}.png")
 
-        response = requests.get(captcha_img_url)
-        response.raise_for_status()
-
-        with open(filename, 'wb') as f:
-            f.write(response.content)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(captcha_img_url) as response:
+                response.raise_for_status()  # 確保圖片成功下載
+                # 儲存圖片
+                with open(filename, 'wb') as f:
+                    f.write(await response.read())
         
         return filename
 
-    def find_lineup_params(self, response):
+    async def find_lineup_params(self, response):
         soup = BeautifulSoup(response, "html.parser")
         choose = soup.find(class_="form-select mobile-select")
-        image = open(self.downloadImage(soup=soup), "rb").read()
+        image_filename = await self.downloadImage(soup=soup)
+        
+        with open(image_filename, "rb") as image_file:
+            image = image_file.read()
 
         csrf = soup.find(id='form-ticket-ticket').find(attrs={"name": "_csrf"}).get('value')
         ticketPrice = choose.find_all('option')[-1].get('value')
@@ -289,13 +303,12 @@ class TixCraftBot:
 
                             if seat_price <= self.config['target_price']:
                                 print(url)
-                                task = asyncio.create_task(self.apiRequest(url=url))
+                                task = asyncio.create_task(self.handleTicketPage(url=url))
                                 seatsTasks.append(task)
                                                     
                         seatsResponses = await asyncio.gather(*seatsTasks)
-                        for isSuccess, response in seatsResponses:
-                            self.find_lineup_params(response=response)
-                        
+                        # for isSuccess, response in seatsResponses:
+                        #     print()
                     else:
                         print("未找到 areaUrlList。")
             else:
