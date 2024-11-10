@@ -1,11 +1,4 @@
 import sys
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.alert import Alert
-from selenium.webdriver.support.ui import WebDriverWait, Select
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from selenium.webdriver.chrome.options import Options
 import time
 import json
 import logging
@@ -75,36 +68,49 @@ class TixCraftBot:
 
     async def sendTickets(self, post_data, url):
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
             "Content-Type": "application/x-www-form-urlencoded",
             "Origin": "https://tixcraft.com",
             "Referer": url,
             "Cookie": self.config['cookie'],
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
             "Accept-Encoding": "gzip, deflate, br, zstd",
-            "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Priority": "u=0, i",
+            "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, data=post_data) as response:
                 if response.status == 200:
                     response_text = await response.text()
-                    # soup = BeautifulSoup(response_text, "html.parser")
-                    # # re = soup.find(id='response')
-                    with open("response_data.txt", "w", encoding="utf-8") as file:
-                        file.write(response_text)
+                    soup = BeautifulSoup(response_text, "html.parser")
+                    scripts = soup.find_all("script")
+                    if "您所輸入的驗證碼不正確，請重新輸入" in scripts[3].text:
+                        print("您所輸入的驗證碼不正確，請重新輸入")
+                        return await self.handleTicketPage(url=url)
+                    elif "區域已售完" in scripts[3].text:
+                        print("區域已售完")
+                        return False
+                    else:
+                        print("成功")
+                        isSuccess, response2 = await self.apiRequest('https://tixcraft.com/ticket/check')
+                        print(response2)
 
-                    return True, response_text, url  # 返回響應內容和 URL
+                        # with open("response_data.txt", "w", encoding="utf-8") as file:
+                        #     file.write(response_text)
+                        return True
                 else:
                     print(f"{url} 請求失敗")
-                    return False, None, None
+                    return False
     
     async def handleTicketPage(self, url):
         try:
             isSuccess, response = await self.apiRequest(url=url)
+            with open("response_data.txt", "w", encoding="utf-8") as file:
+                file.write(response)
             if isSuccess:
-                await self.find_lineup_params(response=response, url=url)
-                return True
+                isBuySuccess = await self.find_lineup_params(response=response, url=url)
+                if isBuySuccess:
+                    return True
+                else:
+                    return False
             else:
                 print(f"Failed to process {url}")
                 return False
@@ -113,16 +119,21 @@ class TixCraftBot:
             return False
 
     async def downloadImage(self, soup):
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+            "Cookie": self.config['cookie'],
+        }
         if not os.path.exists("image"):
             os.makedirs("image")
 
         captcha_img = soup.find(id="TicketForm_verifyCode-image").get('src')
         captcha_img_url = f"https://tixcraft.com{captcha_img}"
+        print('before', captcha_img_url)
         v_value = captcha_img.split("v=")[-1].split(".")[0]
         filename = os.path.join("image", f"{v_value}.png")
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(captcha_img_url) as response:
+            async with session.get(captcha_img_url, headers=headers) as response:
                 response.raise_for_status()  # 確保圖片成功下載
                 # 儲存圖片
                 with open(filename, 'wb') as f:
@@ -133,28 +144,32 @@ class TixCraftBot:
     async def find_lineup_params(self, response, url):
         soup = BeautifulSoup(response, "html.parser")
         choose = soup.find(class_="form-select mobile-select")
-        image_filename = await self.downloadImage(soup=soup)
-        
-        with open(image_filename, "rb") as image_file:
-            image = image_file.read()
 
-        csrf = soup.find(id='form-ticket-ticket').find(attrs={"name": "_csrf"}).get('value')
-        ticketPrice = choose.find_all('option')[-1].get('value')
-        priceSize = 1
-        agree = 1
-        verifyCode = self.ocr.classification(image)
+        if choose:
+            image_filename = await self.downloadImage(soup=soup)
+            
+            with open(image_filename, "rb") as image_file:
+                image = image_file.read()
 
-        nums = choose.get('id').split("TicketForm_ticketPrice_")[1]
-        post_data={
-            "_csrf": csrf,
-            f"TicketForm[ticketPrice][{nums}]": ticketPrice,
-            f"TicketForm[priceSize][{nums}]": priceSize,
-            f"TicketForm[verifyCode][{nums}]": verifyCode,
-            f"TicketForm[agree][{nums}]": agree,
-        }
-        print(post_data)
-        isSuccess, response_text, response_url = await self.sendTickets(post_data=post_data, url=url)
-        # print(f"response_url: {response_url}，請求成功: {isSuccess}，response_text: {response_text}")
+            csrf = soup.find(id='form-ticket-ticket').find(attrs={"name": "_csrf"}).get('value')
+            ticketPrice = choose.find_all('option')[-1].get('value')
+            priceSize = 1
+            agree = 1
+            verifyCode = self.ocr.classification(image)
+
+            nums = choose.get('id').split("TicketForm_ticketPrice_")[1]
+            post_data={
+                '_csrf': csrf,
+                f"TicketForm[ticketPrice][{nums}]": ticketPrice,
+                f"TicketForm[priceSize][{nums}]": priceSize,
+                f"TicketForm[verifyCode]": verifyCode,
+                f"TicketForm[agree]": agree,
+            }
+            print(post_data)
+            # isSuccess = await self.sendTickets(post_data=post_data, url=url)
+            # return isSuccess
+        else:
+            return False
 
     async def run(self):
         tasks = []
@@ -188,7 +203,7 @@ class TixCraftBot:
                             seatsTasks.append(task)
                                                     
                         seatsResponses = await asyncio.gather(*seatsTasks)
-                        self.clear_image_folder()
+                        # self.clear_image_folder()
 
                     else:
                         print("未找到 areaUrlList。")
@@ -197,7 +212,8 @@ class TixCraftBot:
 
     async def apiRequest(self, url):
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+            "Cookie": self.config['cookie'],
         }
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as response:
