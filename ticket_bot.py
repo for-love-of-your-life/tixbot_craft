@@ -27,11 +27,6 @@ class TixCraftBot:
     def __init__(self):
         try:
             self.config = self.load_config()
-            # chrome_options = Options()
-            # chrome_options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
-            # self.driver = webdriver.Chrome(options=chrome_options)
-            # self.driver.maximize_window()
-            # self.wait = WebDriverWait(self.driver, 10)
             self.ocr = ddddocr.DdddOcr(beta=True)
             self.date_keys = []
             self.concertName = re.search(r"(?<=game/)[^/]+", self.config["activity_url"]).group(0)
@@ -66,6 +61,23 @@ class TixCraftBot:
                 except Exception as e:
                     print(f"刪除 {file_path} 時發生錯誤: {e}")
 
+    async def sendCheck(self):
+        isSuccess, response = await self.apiRequest('https://tixcraft.com/ticket/check', type="json")
+        if isSuccess:
+            if "您的選購條件已無足夠數量" in response.get('message'):
+                return False
+            else:
+                if response.get('waiting') == "true":
+                    await asyncio.sleep(int(response.get('time')))
+                    return await self.sendCheck()
+                else:
+                    if "即將前往結帳，請勿進行任何操作" in response.get('message'):
+                        return True
+                    else:
+                        return False
+        else:
+            return False
+
     async def sendTickets(self, post_data, url):
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -90,12 +102,10 @@ class TixCraftBot:
                         return False
                     else:
                         print("成功")
-                        isSuccess, response2 = await self.apiRequest('https://tixcraft.com/ticket/check')
-                        print(response2)
+                        return await self.sendCheck()
 
                         # with open("response_data.txt", "w", encoding="utf-8") as file:
                         #     file.write(response_text)
-                        return True
                 else:
                     print(f"{url} 請求失敗")
                     return False
@@ -103,8 +113,6 @@ class TixCraftBot:
     async def handleTicketPage(self, url):
         try:
             isSuccess, response = await self.apiRequest(url=url)
-            with open("response_data.txt", "w", encoding="utf-8") as file:
-                file.write(response)
             if isSuccess:
                 isBuySuccess = await self.find_lineup_params(response=response, url=url)
                 if isBuySuccess:
@@ -128,7 +136,6 @@ class TixCraftBot:
 
         captcha_img = soup.find(id="TicketForm_verifyCode-image").get('src')
         captcha_img_url = f"https://tixcraft.com{captcha_img}"
-        print('before', captcha_img_url)
         v_value = captcha_img.split("v=")[-1].split(".")[0]
         filename = os.path.join("image", f"{v_value}.png")
 
@@ -165,9 +172,8 @@ class TixCraftBot:
                 f"TicketForm[verifyCode]": verifyCode,
                 f"TicketForm[agree]": agree,
             }
-            print(post_data)
-            # isSuccess = await self.sendTickets(post_data=post_data, url=url)
-            # return isSuccess
+            isSuccess = await self.sendTickets(post_data=post_data, url=url)
+            return isSuccess
         else:
             return False
 
@@ -203,14 +209,14 @@ class TixCraftBot:
                             seatsTasks.append(task)
                                                     
                         seatsResponses = await asyncio.gather(*seatsTasks)
-                        # self.clear_image_folder()
+                        self.clear_image_folder()
 
                     else:
                         print("未找到 areaUrlList。")
             else:
                 print('請求失敗')
 
-    async def apiRequest(self, url):
+    async def apiRequest(self, url, type="text"):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
             "Cookie": self.config['cookie'],
@@ -218,8 +224,10 @@ class TixCraftBot:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
-                    # print(f"{url}請求成功")
-                    return True, await response.text()  # 取得響應內容
+                    if type == "json":
+                        return True, await response.json()  # 取得響應內容
+                    else:
+                        return True, await response.text()  # 取得響應內容
                 else:
                     print(f"{url}請求失敗")
                     return False, response
