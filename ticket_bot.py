@@ -1,11 +1,4 @@
 import sys
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.alert import Alert
-from selenium.webdriver.support.ui import WebDriverWait, Select
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from selenium.webdriver.chrome.options import Options
 import time
 import json
 import logging
@@ -16,7 +9,9 @@ import re
 import aiohttp
 import asyncio
 from itertools import islice
-import threading
+import requests
+import os
+from datetime import datetime
 
 # 設置日誌
 logging.basicConfig(
@@ -33,11 +28,6 @@ class TixCraftBot:
     def __init__(self):
         try:
             self.config = self.load_config()
-            chrome_options = Options()
-            chrome_options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
-            self.driver = webdriver.Chrome(options=chrome_options)
-            self.driver.maximize_window()
-            self.wait = WebDriverWait(self.driver, 10)
             self.ocr = ddddocr.DdddOcr(beta=True)
             self.date_keys = []
             self.concertName = re.search(r"(?<=game/)[^/]+", self.config["activity_url"]).group(0)
@@ -59,170 +49,150 @@ class TixCraftBot:
             input("按 Enter 鍵結束程式...")
             sys.exit(1)
 
-    def find_and_click_button(self, possible_selectors):
-        """嘗試多個可能的選擇器來找到並點擊按鈕"""
-        for selector_type, selector_value in possible_selectors:
-            try:
-                logger.info(f"嘗試找尋按鈕: {selector_value}")
-                elements = self.wait.until(
-                    EC.presence_of_all_elements_located((selector_type, selector_value))
-                )
-                for element in elements:
-                    if element.is_displayed() and element.is_enabled():
-
-                        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-                        time.sleep(0.5)  # 等待滾動完成
-
-                        button_text = element.text
-                        logger.info(f"找到按鈕: {button_text}")
-                    
-                        if "確認張數" in button_text:
-                            logger.info("點擊確認張數按鈕")
-                            element.click()
-                            return True
-            except Exception:
-                continue
-        return False
-
-    def select_ticket_quantity(self):
-        """選擇票數"""
-        try:
-            possible_selectors = [
-                (By.XPATH, "//select[starts-with(@id, 'TicketForm_ticketPrice_')]"),
-                (By.CSS_SELECTOR, "select[name^='TicketForm[ticketPrice]']"),
-                (By.CLASS_NAME, "form-select")  # 根據類名選擇下拉框
-            ]
-            
-            for selector_type, selector_value in possible_selectors:
+    def clear_image_folder(self):
+        folder = "image"
+        if os.path.exists(folder):
+            for filename in os.listdir(folder):
+                file_path = os.path.join(folder, filename)
                 try:
-                    # 等待下拉框可用
-                    quantity_select = self.wait.until(
-                        EC.presence_of_element_located((selector_type, selector_value))
-                    )
-                    highest_select = Select(quantity_select).options[-1].get_attribute("value")
-                    highest_select = int(highest_select)
-                    value = self.config['ticket_quantity']
-                    if value >= highest_select:
-                        value = highest_select
-
-                    # 點擊下拉框以顯示選項
-                    quantity_select.click()  
-                    time.sleep(0.2)  # 等待下拉框展開
-                    
-                    # 選擇票數
-                    quantity_option = self.driver.find_element(
-                        By.XPATH, 
-                        f"//option[@value='{value}']"
-                    )
-                    quantity_option.click()  # 點擊選擇的票數
-                    logger.info(f"已選擇 {value} 張票")
-
-                     # 等待 checkbox 元素加載
-                    checkbox = self.wait.until(
-                        EC.presence_of_element_located((By.ID, "TicketForm_agree"))
-                    )
-
-                    # 檢查 checkbox 是否已經被勾選
-                    if not checkbox.is_selected():
-                        # 若尚未勾選，點擊打勾
-                        checkbox.click()
-                        logger.info("已勾選會員服務條款")
-                    else:
-                        logger.info("會員服務條款已被勾選")
-
-                    return True
-                except NoSuchElementException:
-                    logger.warning(f"未找到選擇器: {selector_value}")
-                    continue
+                    if os.path.isfile(file_path) or os.path.islink(file_path):
+                        os.unlink(file_path)  # 刪除檔案或連結
+                    elif os.path.isdir(file_path):
+                        os.rmdir(file_path)  # 刪除空的子資料夾    
                 except Exception as e:
-                    logger.error(f"在選擇票數過程中出現錯誤: {str(e)}")
-            
-            logger.error("未找到票數選擇框")
-            return False
-            
-        except Exception as e:
-            logger.error(f"選擇票數失敗: {str(e)}")
-            return False
+                    print(f"刪除 {file_path} 時發生錯誤: {e}")
 
-    def handle_captcha(self):
-        """处理验证码的获取和识别过程"""
-        try:
-            image = open("captcha_image.png", "rb").read()
-            captcha_result = self.ocr.classification(image)
-            
-            if captcha_result:
-                self.fill_in_captcha(captcha_result)  # 使用 self 调用方法
-                possible_selectors = [
-                    (By.CLASS_NAME, "btn-primary"),  # 根據 class 名稱
-                    (By.XPATH, "//button[contains(text(), '確認張數')]")
-                ]
-                self.find_and_click_button(possible_selectors)
-                return True
+    async def sendCheck(self):
+        isSuccess, response = await self.apiRequest('https://tixcraft.com/ticket/check', type="json")
+        if isSuccess:
+            if "您的選購條件已無足夠" in response.get('message'):
+                # print("選購條件不足")
+                return False
+            elif "已超過每筆訂單張數限制" in response.get('message'):
+                # print("已超過每筆訂單張數限制")
+                return False
             else:
-                logger.error("验证码识别失败，请重试")
-                
-        except Exception as e:
-            logger.error(f"处理验证码时发生错误: {str(e)}")
+                # 第一次進來成功後就需要接下去處理下一隻api 了
+                print("結束")
+                if response.get('waiting') == "true":
+                    await asyncio.sleep(int(response.get('time')))
+                    return await self.sendCheck()
+                else:
+                    if "即將前往結帳，請勿進行任何操作" in response.get('message'):
+                        return True
+                    else:
+                        return False
+        else:
+            return False
 
-    def fill_in_captcha(self, captcha_result):
-        """填写验证码"""
-        captcha_input = self.wait.until(
-            EC.presence_of_element_located((By.ID, "TicketForm_verifyCode"))
-        )
-        captcha_input.clear()
-        captcha_input.send_keys(captcha_result)
-        logger.info("填写验证码成功")
-
-    def get_captcha_image_path(self):
-        """获取验证码图片的路径"""
+    async def sendTickets(self, post_data, url):
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": "https://tixcraft.com",
+            "Referer": url,
+            "Cookie": self.config['cookie'],
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, data=post_data) as response:
+                if response.status == 200:
+                    response_text = await response.text()
+                    soup = BeautifulSoup(response_text, "html.parser")
+                    scripts = soup.find_all("script")
+                    if "您所輸入的驗證碼不正確，請重新輸入" in scripts[3].text:
+                        print("您所輸入的驗證碼不正確，請重新輸入")
+                        return await self.handleTicketPage(url=url, retry=True)
+                    elif "區域已售完" in scripts[3].text:
+                        print("區域已售完")
+                        return False
+                    else:
+                        print("成功")
+                        return await self.sendCheck()
+                else:
+                    print(f"{url} 請求失敗")
+                    return False
+    
+    async def handleTicketPage(self, url, retry=False):
         try:
-            # 使用 ID 定位验证码图片元素
-            captcha_image_element = self.wait.until(
-                EC.presence_of_element_located((By.ID, "TicketForm_verifyCode-image"))  # 使用 ID
-            )
-            # 输出验证码元素的 HTML
-            logger.info("获取验证码元素 HTML: %s", captcha_image_element.get_attribute('outerHTML'))
+            isSuccess, response = await self.apiRequest(url=url)
+            if isSuccess:
+                soup = BeautifulSoup(response, "html.parser")
+                lineupSuccess, ticketPrice = await self.find_lineup_params(response=response, url=url, soup=soup)
+                if not retry:
+                    seat = soup.find(class_="select-area").text
+                    start = seat.find("所選擇區域")  # 找到 "所選擇區域" 的位置
+                    end = seat.find("最多可選 4 張")  # 找到 "最多可選 4 張" 的位置
 
-            # 截图并保存
-            captcha_image_element.screenshot("captcha_image.png")
-            logger.info("验证码图片已保存为 captcha_image.png")
-            return "captcha_image.png"
-            
+                    if start != -1 and end != -1:
+                        # 取出兩個固定字串之間的部分
+                        selected_area = seat[start:end].strip()
+                        cleaned_area = ' '.join(selected_area.split()).split(' ')[1]
+
+                        print(f"{cleaned_area}已購買{ticketPrice}張")
+                    else:
+                        print("未找到指定的範圍")
+                return lineupSuccess
+            else:
+                print(f"Failed to process {url}")
+                return False
         except Exception as e:
-            logger.error(f"获取验证码图片时发生错误: {str(e)}")
-            return None
+            print(f"Error processing {url}: {e}")
+            return False
 
-    def ticket_page(self):
-        retry_count = 0
-        while True:
-            retry_count += 1
-            logger.info(f"第 {retry_count} 次尝试")
-            if self.select_ticket_quantity():
+    async def downloadImage(self, soup):
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+            "Cookie": self.config['cookie'],
+        }
+        if not os.path.exists("image"):
+            os.makedirs("image")
 
-                captcha_image_path = self.get_captcha_image_path()  # 替换为你的获取验证码图片的逻辑
-                if captcha_image_path and self.handle_captcha():  # 传递验证码图片路径
-                    try:
-                        alert = None
-                        alert = WebDriverWait(self.driver, 1).until(EC.alert_is_present())
-                    except Exception as e:
-                        print(e)
-
-                    if alert:
-                        logger.info(f"Alert found: {alert.text}")
-                        if alert.text == '您所輸入的驗證碼不正確，請重新輸入':
-                            alert.accept()
-
-    def find_lineup_params(self, response):
-        soup = BeautifulSoup(response, "html.parser")
-        csrf = soup.find(id='form-ticket-ticket').find(attrs={"name": "_csrf"}).get('value')
-        amount = soup.find(id="TicketForm_ticketPrice_02").find_all('option')[-1].get('value')
-        agree = 1
         captcha_img = soup.find(id="TicketForm_verifyCode-image").get('src')
         captcha_img_url = f"https://tixcraft.com{captcha_img}"
+        v_value = captcha_img.split("v=")[-1].split(".")[0]
+        filename = os.path.join("image", f"{v_value}.png")
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(captcha_img_url, headers=headers) as response:
+                response.raise_for_status()  # 確保圖片成功下載
+                # 儲存圖片
+                with open(filename, 'wb') as f:
+                    f.write(await response.read())
         
-        print(captcha_img_url)
+        return filename
+
+    async def find_lineup_params(self, response, url, soup):
+        choose = soup.find(class_="form-select mobile-select")
+
+        if choose:
+            image_filename = await self.downloadImage(soup=soup)
+            
+            with open(image_filename, "rb") as image_file:
+                image = image_file.read()
+
+            csrf = soup.find(id='form-ticket-ticket').find(attrs={"name": "_csrf"}).get('value')
+            ticketPrice = choose.find_all('option')[-1].get('value')
+            priceSize = 1
+            agree = 1
+            verifyCode = self.ocr.classification(image)
+
+            nums = choose.get('id').split("TicketForm_ticketPrice_")[1]
+            post_data={
+                '_csrf': csrf,
+                f"TicketForm[ticketPrice][{nums}]": ticketPrice,
+                f"TicketForm[priceSize][{nums}]": priceSize,
+                f"TicketForm[verifyCode]": verifyCode,
+                f"TicketForm[agree]": agree,
+            }
+            isSuccess = await self.sendTickets(post_data=post_data, url=url)
+            return isSuccess, ticketPrice
+        else:
+            return False, None
 
     async def run(self):
+        print("開始")
         tasks = []
         for item in self.date_keys:
             value = item['value']
@@ -245,36 +215,38 @@ class TixCraftBot:
                         area_url_list = json.loads(area_url_list_json)
 
                         # 從哪邊開始抓
-                        maxSeatsHandle = list(islice(area_url_list.items(), 2))
+                        maxSeatsHandle = list(islice(area_url_list.items(), 1))
                         
                         seatsTasks = []
                         for key, url in maxSeatsHandle:
-                            element = soup.find(id=key)
-                            seat_price = element.get_text().split()[1]
-
-                            if seat_price <= self.config['target_price']:
-                                print(url)
-                        #         task = asyncio.create_task(self.apiRequest(url=url))
-                        #         seatsTasks.append(task)
+                            print(url)
+                            # 直接呼叫同步方法，移除 asyncio.create_task()
+                            await self.handleTicketPage(url=url)
+                        # for key, url in maxSeatsHandle:
+                        #     print(url)
+                        #     task = asyncio.create_task(self.handleTicketPage(url=url))
+                        #     seatsTasks.append(task)
                                                     
-                        # seatsResponses = await asyncio.gather(*seatsTasks)
-                        # for isSuccess, response in seatsResponses:
-                        #     self.find_lineup_params(response=response)
-                        
+                        # await asyncio.gather(*seatsTasks)
+                        self.clear_image_folder()
+
                     else:
                         print("未找到 areaUrlList。")
             else:
                 print('請求失敗')
 
-    async def apiRequest(self, url):
+    async def apiRequest(self, url, type="text"):
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+            "Cookie": self.config['cookie'],
         }
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
-                    # print(f"{url}請求成功")
-                    return True, await response.text()  # 取得響應內容
+                    if type == "json":
+                        return True, await response.json()  # 取得響應內容
+                    else:
+                        return True, await response.text()  # 取得響應內容
                 else:
                     print(f"{url}請求失敗")
                     return False, response
@@ -305,20 +277,19 @@ class TixCraftBot:
 if __name__ == "__main__":
     bot = TixCraftBot()
     asyncio.run(bot.getAllDate())
-    asyncio.run(bot.run())
 
-    # while True:
-    #     now = datetime.now()
-    #     # 檢查時間是否達到 3 點 0 分 1 秒
-    #     if now.hour == 12 and now.minute >= 00 and now.second >= 1:
-    #         try:
-    #             bot.run(reRun=False)
-    #             break
-    #         except Exception as e:
-    #             logger.error(f"程式執行失敗: {str(e)}")
-    #             input("\n按 Enter 鍵結束程式...")
-    #         # 等待一天後再檢查，以免在當天重複執行
-    #         time.sleep(86400)  # 86400 秒 = 24 小時
-    #     else:
-    #         # 確保每秒檢查一次，避免錯過目標時間
-    #         time.sleep(0.2)
+    while True:
+        now = datetime.now()
+        # 檢查時間是否達到 3 點 0 分 1 秒
+        if now.hour == 1 and now.minute >= 18 and now.second >= 1:
+            try:
+                asyncio.run(bot.run())
+                break
+            except Exception as e:
+                logger.error(f"程式執行失敗: {str(e)}")
+                input("\n按 Enter 鍵結束程式...")
+            # 等待一天後再檢查，以免在當天重複執行
+            time.sleep(86400)  # 86400 秒 = 24 小時
+        else:
+            # 確保每秒檢查一次，避免錯過目標時間
+            time.sleep(0.2)

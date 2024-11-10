@@ -1,7 +1,12 @@
 # 自行填寫config
 config.json
-captcha_image.png
 ticket_bot.log
+
+# 自行下載google driver
 chrome-mac-x64/
+chromedriver-win64/
+
+
 .DS_Store
 ddddocr
+image/
