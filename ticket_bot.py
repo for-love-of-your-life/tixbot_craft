@@ -96,7 +96,7 @@ class TixCraftBot:
                     scripts = soup.find_all("script")
                     if "您所輸入的驗證碼不正確，請重新輸入" in scripts[3].text:
                         print("您所輸入的驗證碼不正確，請重新輸入")
-                        return await self.handleTicketPage(url=url)
+                        return await self.handleTicketPage(url=url, retry=True)
                     elif "區域已售完" in scripts[3].text:
                         print("區域已售完")
                         return False
@@ -110,15 +110,26 @@ class TixCraftBot:
                     print(f"{url} 請求失敗")
                     return False
     
-    async def handleTicketPage(self, url):
+    async def handleTicketPage(self, url, retry=False):
         try:
             isSuccess, response = await self.apiRequest(url=url)
             if isSuccess:
-                isBuySuccess = await self.find_lineup_params(response=response, url=url)
-                if isBuySuccess:
-                    return True
-                else:
-                    return False
+                soup = BeautifulSoup(response, "html.parser")
+                lineupSuccess, ticketPrice = await self.find_lineup_params(response=response, url=url, soup=soup)
+                if not retry:
+                    seat = soup.find(class_="select-area").text
+                    start = seat.find("所選擇區域")  # 找到 "所選擇區域" 的位置
+                    end = seat.find("最多可選 4 張")  # 找到 "最多可選 4 張" 的位置
+
+                    if start != -1 and end != -1:
+                        # 取出兩個固定字串之間的部分
+                        selected_area = seat[start:end].strip()
+                        cleaned_area = ' '.join(selected_area.split()).split(' ')[1]
+
+                        print(f"{cleaned_area}已購買{ticketPrice}張")
+                    else:
+                        print("未找到指定的範圍")
+                return lineupSuccess
             else:
                 print(f"Failed to process {url}")
                 return False
@@ -148,8 +159,7 @@ class TixCraftBot:
         
         return filename
 
-    async def find_lineup_params(self, response, url):
-        soup = BeautifulSoup(response, "html.parser")
+    async def find_lineup_params(self, response, url, soup):
         choose = soup.find(class_="form-select mobile-select")
 
         if choose:
@@ -173,9 +183,9 @@ class TixCraftBot:
                 f"TicketForm[agree]": agree,
             }
             isSuccess = await self.sendTickets(post_data=post_data, url=url)
-            return isSuccess
+            return isSuccess, ticketPrice
         else:
-            return False
+            return False, None
 
     async def run(self):
         tasks = []
