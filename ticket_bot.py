@@ -11,6 +11,7 @@ import asyncio
 from itertools import islice
 import requests
 import os
+from datetime import datetime
 
 # 設置日誌
 logging.basicConfig(
@@ -64,9 +65,15 @@ class TixCraftBot:
     async def sendCheck(self):
         isSuccess, response = await self.apiRequest('https://tixcraft.com/ticket/check', type="json")
         if isSuccess:
-            if "您的選購條件已無足夠數量" in response.get('message'):
+            if "您的選購條件已無足夠" in response.get('message'):
+                # print("選購條件不足")
+                return False
+            elif "已超過每筆訂單張數限制" in response.get('message'):
+                # print("已超過每筆訂單張數限制")
                 return False
             else:
+                # 第一次進來成功後就需要接下去處理下一隻api 了
+                print("結束")
                 if response.get('waiting') == "true":
                     await asyncio.sleep(int(response.get('time')))
                     return await self.sendCheck()
@@ -103,9 +110,6 @@ class TixCraftBot:
                     else:
                         print("成功")
                         return await self.sendCheck()
-
-                        # with open("response_data.txt", "w", encoding="utf-8") as file:
-                        #     file.write(response_text)
                 else:
                     print(f"{url} 請求失敗")
                     return False
@@ -188,6 +192,7 @@ class TixCraftBot:
             return False, None
 
     async def run(self):
+        print("開始")
         tasks = []
         for item in self.date_keys:
             value = item['value']
@@ -215,10 +220,14 @@ class TixCraftBot:
                         seatsTasks = []
                         for key, url in maxSeatsHandle:
                             print(url)
-                            task = asyncio.create_task(self.handleTicketPage(url=url))
-                            seatsTasks.append(task)
+                            # 直接呼叫同步方法，移除 asyncio.create_task()
+                            await self.handleTicketPage(url=url)
+                        # for key, url in maxSeatsHandle:
+                        #     print(url)
+                        #     task = asyncio.create_task(self.handleTicketPage(url=url))
+                        #     seatsTasks.append(task)
                                                     
-                        seatsResponses = await asyncio.gather(*seatsTasks)
+                        # await asyncio.gather(*seatsTasks)
                         self.clear_image_folder()
 
                     else:
@@ -268,20 +277,19 @@ class TixCraftBot:
 if __name__ == "__main__":
     bot = TixCraftBot()
     asyncio.run(bot.getAllDate())
-    asyncio.run(bot.run())
 
-    # while True:
-    #     now = datetime.now()
-    #     # 檢查時間是否達到 3 點 0 分 1 秒
-    #     if now.hour == 12 and now.minute >= 00 and now.second >= 1:
-    #         try:
-    #             asyncio.run(bot.run())
-    #             break
-    #         except Exception as e:
-    #             logger.error(f"程式執行失敗: {str(e)}")
-    #             input("\n按 Enter 鍵結束程式...")
-    #         # 等待一天後再檢查，以免在當天重複執行
-    #         time.sleep(86400)  # 86400 秒 = 24 小時
-    #     else:
-    #         # 確保每秒檢查一次，避免錯過目標時間
-    #         time.sleep(0.2)
+    while True:
+        now = datetime.now()
+        # 檢查時間是否達到 3 點 0 分 1 秒
+        if now.hour == 1 and now.minute >= 18 and now.second >= 1:
+            try:
+                asyncio.run(bot.run())
+                break
+            except Exception as e:
+                logger.error(f"程式執行失敗: {str(e)}")
+                input("\n按 Enter 鍵結束程式...")
+            # 等待一天後再檢查，以免在當天重複執行
+            time.sleep(86400)  # 86400 秒 = 24 小時
+        else:
+            # 確保每秒檢查一次，避免錯過目標時間
+            time.sleep(0.2)
