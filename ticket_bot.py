@@ -12,6 +12,7 @@ from itertools import islice
 import requests
 import os
 from datetime import datetime
+from io import BytesIO
 
 # 設置日誌
 logging.basicConfig(
@@ -73,7 +74,6 @@ class TixCraftBot:
                 return False
             else:
                 # 第一次進來成功後就需要接下去處理下一隻api 了
-                print("結束")
                 if response.get('waiting') == "true":
                     await asyncio.sleep(int(response.get('time')))
                     return await self.sendCheck()
@@ -99,7 +99,7 @@ class TixCraftBot:
             async with session.post(url, headers=headers, data=post_data) as response:
                 if response.status == 200:
                     response_text = await response.text()
-                    soup = BeautifulSoup(response_text, "html.parser")
+                    soup = BeautifulSoup(response_text, "lxml")
                     scripts = soup.find_all("script")
                     if "您所輸入的驗證碼不正確，請重新輸入" in scripts[3].text:
                         print("您所輸入的驗證碼不正確，請重新輸入")
@@ -118,8 +118,8 @@ class TixCraftBot:
         try:
             isSuccess, response = await self.apiRequest(url=url)
             if isSuccess:
-                soup = BeautifulSoup(response, "html.parser")
-                lineupSuccess, ticketPrice = await self.find_lineup_params(response=response, url=url, soup=soup)
+                soup = BeautifulSoup(response, "lxml")
+                lineupSuccess, ticketPrice = await self.find_lineup_params(url=url, soup=soup)
                 if not retry:
                     seat = soup.find(class_="select-area").text
                     start = seat.find("所選擇區域")  # 找到 "所選擇區域" 的位置
@@ -151,41 +151,40 @@ class TixCraftBot:
 
         captcha_img = soup.find(id="TicketForm_verifyCode-image").get('src')
         captcha_img_url = f"https://tixcraft.com{captcha_img}"
-        v_value = captcha_img.split("v=")[-1].split(".")[0]
-        filename = os.path.join("image", f"{v_value}.png")
+        # v_value = captcha_img.split("v=")[-1].split(".")[0]
+        # filename = os.path.join("image", f"{v_value}.png")
 
         async with aiohttp.ClientSession() as session:
             async with session.get(captcha_img_url, headers=headers) as response:
                 response.raise_for_status()  # 確保圖片成功下載
                 # 儲存圖片
-                with open(filename, 'wb') as f:
-                    f.write(await response.read())
+                image_data = BytesIO(await response.read())
         
-        return filename
+        return image_data
 
-    async def find_lineup_params(self, response, url, soup):
+    async def find_lineup_params(self, url, soup):
         choose = soup.find(class_="form-select mobile-select")
 
         if choose:
-            image_filename = await self.downloadImage(soup=soup)
-            
-            with open(image_filename, "rb") as image_file:
-                image = image_file.read()
+            print('開始下載圖片')
+            image_data = await self.downloadImage(soup=soup)
+            print('結束下載圖片')
 
             csrf = soup.find(id='form-ticket-ticket').find(attrs={"name": "_csrf"}).get('value')
             ticketPrice = choose.find_all('option')[-1].get('value')
             priceSize = 1
             agree = 1
-            verifyCode = self.ocr.classification(image)
+            verifyCode = self.ocr.classification(image_data.getvalue())
 
             nums = choose.get('id').split("TicketForm_ticketPrice_")[1]
             post_data={
                 '_csrf': csrf,
-                f"TicketForm[ticketPrice][{nums}]": ticketPrice,
+                f"TicketForm[ticketPrice][{nums}]": '1',
                 f"TicketForm[priceSize][{nums}]": priceSize,
                 f"TicketForm[verifyCode]": verifyCode,
                 f"TicketForm[agree]": agree,
             }
+            print("結束")
             isSuccess = await self.sendTickets(post_data=post_data, url=url)
             return isSuccess, ticketPrice
         else:
@@ -203,7 +202,7 @@ class TixCraftBot:
         responses = await asyncio.gather(*tasks)
         for isSuccess, response in responses:
             if isSuccess:
-                soup = BeautifulSoup(response, "html.parser")
+                soup = BeautifulSoup(response, "lxml")
                 scripts = soup.find_all("script")
                 if len(scripts) >= 20:
                     script_content = scripts[20].string
@@ -256,9 +255,10 @@ class TixCraftBot:
         isSuccess, response = await asyncio.create_task(self.apiRequest(url=url))
 
         if isSuccess:
-            soup = BeautifulSoup(response, "html.parser")
+            soup = BeautifulSoup(response, "lxml")
             date_pattern = re.compile(r"\d{4}/\d{2}/\d{2}")
             date_keys = []
+            find = False
             for tr in soup.select("tr.gridc.fcTxt"):
                 data_key = tr.get("data-key")
                 if data_key:
@@ -267,7 +267,11 @@ class TixCraftBot:
                     date_match = date_pattern.search(date_text)
                     date = date_match.group(0) if date_match else ""
                     # 存入所需格式
-                    date_keys.append({"value": data_key, "tag": False, "date": date})
+                    if date == self.config['date']:
+                        find = True
+                        date_keys.append({"value": data_key, "tag": False, "date": date})
+            if not find:
+                print('找不到所選日期')
             # 取得所有天數
             self.date_keys = date_keys
             print(f"取得天數成功: {date_keys}")
@@ -277,19 +281,20 @@ class TixCraftBot:
 if __name__ == "__main__":
     bot = TixCraftBot()
     asyncio.run(bot.getAllDate())
+    asyncio.run(bot.run())
 
-    while True:
-        now = datetime.now()
-        # 檢查時間是否達到 3 點 0 分 1 秒
-        if now.hour == 1 and now.minute >= 18 and now.second >= 1:
-            try:
-                asyncio.run(bot.run())
-                break
-            except Exception as e:
-                logger.error(f"程式執行失敗: {str(e)}")
-                input("\n按 Enter 鍵結束程式...")
-            # 等待一天後再檢查，以免在當天重複執行
-            time.sleep(86400)  # 86400 秒 = 24 小時
-        else:
-            # 確保每秒檢查一次，避免錯過目標時間
-            time.sleep(0.2)
+    # while True:
+    #     now = datetime.now()
+    #     # 檢查時間是否達到 3 點 0 分 1 秒
+    #     if now.hour == 1 and now.minute >= 18 and now.second >= 1:
+    #         try:
+    #             asyncio.run(bot.run())
+    #             break
+    #         except Exception as e:
+    #             logger.error(f"程式執行失敗: {str(e)}")
+    #             input("\n按 Enter 鍵結束程式...")
+    #         # 等待一天後再檢查，以免在當天重複執行
+    #         time.sleep(86400)  # 86400 秒 = 24 小時
+    #     else:
+    #         # 確保每秒檢查一次，避免錯過目標時間
+    #         time.sleep(0.2)
