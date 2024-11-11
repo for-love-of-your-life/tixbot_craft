@@ -145,25 +145,12 @@ class TixCraftBot:
             return False
 
     async def downloadImage(self, soup):
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-            "Cookie": self.config['cookie'],
-        }
-        if not os.path.exists("image"):
-            os.makedirs("image")
-
         captcha_img = soup.find(id="TicketForm_verifyCode-image").get('src')
         captcha_img_url = f"https://tixcraft.com{captcha_img}"
         # v_value = captcha_img.split("v=")[-1].split(".")[0]
         # filename = os.path.join("image", f"{v_value}.png")
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(captcha_img_url, headers=headers) as response:
-                response.raise_for_status()  # 確保圖片成功下載
-                # 儲存圖片
-                image_data = BytesIO(await response.read())
-        
-        return image_data
+        isSuccess, image_data = await self.apiRequest(url=captcha_img_url, type="image")
+        return BytesIO(image_data)
 
     async def find_lineup_params(self, url, soup):
         choose = soup.find(class_="form-select mobile-select")
@@ -243,9 +230,11 @@ class TixCraftBot:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     if type == "json":
-                        return True, await response.json()  # 取得響應內容
+                        return True, await response.json()
+                    elif type == "image":
+                        return True, await response.read()
                     else:
-                        return True, await response.text()  # 取得響應內容
+                        return True, await response.text()
                 else:
                     print(f"{url}請求失敗")
                     return False, response
