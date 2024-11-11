@@ -1,8 +1,5 @@
-selenium 
-pillow 
-numpy 
 ddddocr 
-opencv-python 
-onnxruntime 
+beautifulsoup4 
 aiohttp 
-beautifulsoup4
+requests 
+lxml
