@@ -67,14 +67,14 @@ class TixCraftBot:
         isSuccess, response = await self.apiRequest('https://tixcraft.com/ticket/check', type="json")
         if isSuccess:
             if "您的選購條件已無足夠" in response.get('message'):
-                # print("選購條件不足")
+                print("選購條件不足")
                 return False
             elif "已超過每筆訂單張數限制" in response.get('message'):
-                # print("已超過每筆訂單張數限制")
+                print("已超過每筆訂單張數限制")
                 return False
             else:
                 # 第一次進來成功後就需要接下去處理下一隻api 了
-                if response.get('waiting') == "true":
+                if response.get('waiting') == True:
                     await asyncio.sleep(int(response.get('time')))
                     return await self.sendCheck()
                 else:
@@ -102,13 +102,13 @@ class TixCraftBot:
                     soup = BeautifulSoup(response_text, "lxml")
                     scripts = soup.find_all("script")
                     if "您所輸入的驗證碼不正確，請重新輸入" in scripts[3].text:
-                        print("您所輸入的驗證碼不正確，請重新輸入")
+                        print("驗證碼錯誤")
                         return await self.handleTicketPage(url=url, retry=True)
                     elif "區域已售完" in scripts[3].text:
                         print("區域已售完")
                         return False
                     else:
-                        print("成功")
+                        print("成功送出")
                         return await self.sendCheck()
                 else:
                     print(f"{url} 請求失敗")
@@ -130,7 +130,10 @@ class TixCraftBot:
                         selected_area = seat[start:end].strip()
                         cleaned_area = ' '.join(selected_area.split()).split(' ')[1]
 
-                        print(f"{cleaned_area}已購買{ticketPrice}張")
+                        if lineupSuccess:
+                            print(f"{cleaned_area}已購買{ticketPrice}張")
+                        else:
+                            print(f"{cleaned_area}購買失敗")
                     else:
                         print("未找到指定的範圍")
                 return lineupSuccess
@@ -166,9 +169,7 @@ class TixCraftBot:
         choose = soup.find(class_="form-select mobile-select")
 
         if choose:
-            print('開始下載圖片')
             image_data = await self.downloadImage(soup=soup)
-            print('結束下載圖片')
 
             csrf = soup.find(id='form-ticket-ticket').find(attrs={"name": "_csrf"}).get('value')
             ticketPrice = choose.find_all('option')[-1].get('value')
@@ -179,13 +180,13 @@ class TixCraftBot:
             nums = choose.get('id').split("TicketForm_ticketPrice_")[1]
             post_data={
                 '_csrf': csrf,
-                f"TicketForm[ticketPrice][{nums}]": '1',
+                f"TicketForm[ticketPrice][{nums}]": ticketPrice,
                 f"TicketForm[priceSize][{nums}]": priceSize,
                 f"TicketForm[verifyCode]": verifyCode,
                 f"TicketForm[agree]": agree,
             }
-            print("結束")
             isSuccess = await self.sendTickets(post_data=post_data, url=url)
+            # 等待結果並獲取回傳值
             return isSuccess, ticketPrice
         else:
             return False, None
@@ -217,16 +218,15 @@ class TixCraftBot:
                         maxSeatsHandle = list(islice(area_url_list.items(), 1))
                         
                         seatsTasks = []
-                        for key, url in maxSeatsHandle:
-                            print(url)
-                            # 直接呼叫同步方法，移除 asyncio.create_task()
-                            await self.handleTicketPage(url=url)
                         # for key, url in maxSeatsHandle:
                         #     print(url)
-                        #     task = asyncio.create_task(self.handleTicketPage(url=url))
-                        #     seatsTasks.append(task)
+                        #     await self.handleTicketPage(url=url)
+                        for key, url in maxSeatsHandle:
+                            print(url)
+                            task = asyncio.create_task(self.handleTicketPage(url=url))
+                            seatsTasks.append(task)
                                                     
-                        # await asyncio.gather(*seatsTasks)
+                        await asyncio.gather(*seatsTasks)
                         self.clear_image_folder()
 
                     else:
