@@ -50,8 +50,8 @@ class TixCraftBot:
             input("按 Enter 鍵結束程式...")
             sys.exit(1)
 
-    async def sendCheck(self):
-        isSuccess, response = await self.apiRequest('https://tixcraft.com/ticket/check', type="json")
+    async def sendCheck(self, index=0):
+        isSuccess, response = await self.apiRequest('https://tixcraft.com/ticket/check', type="json", index=index)
         if isSuccess:
             if "您的選購條件已無足夠" in response.get('message'):
                 print("選購條件不足")
@@ -64,7 +64,7 @@ class TixCraftBot:
                 if response.get('waiting') == True:
                     print(f"等候{response.get('time')}秒")
                     await asyncio.sleep(int(response.get('time')))
-                    return await self.sendCheck()
+                    return await self.sendCheck(index=index)
                 else:
                     if "即將前往結帳，請勿進行任何操作" in response.get('message'):
                         return True
@@ -73,32 +73,33 @@ class TixCraftBot:
         else:
             return False
 
-    async def sendTickets(self, post_data, url):
-        isSuccess, response = await self.apiRequest(url=url, method="post", data=post_data)
+    async def sendTickets(self, post_data, url, index=0):
+        isSuccess, response = await self.apiRequest(url=url, method="post", data=post_data, index=index)
 
         if isSuccess:
+            print()
             soup = BeautifulSoup(response, "lxml")
             scripts = soup.find_all("script")
             if "您所輸入的驗證碼不正確，請重新輸入" in scripts[3].text:
                 print("驗證碼錯誤")
-                return await self.handleTicketPage(url=url, retry=True)
+                return await self.handleTicketPage(url=url, retry=True, index=index)
             elif "區域已售完" in scripts[3].text:
                 print("區域已售完")
                 return False
             else:
                 print("成功送出")
-                return await self.sendCheck()
+                return await self.sendCheck(index=index)
         else:
             print(f"{url} 請求失敗")
             return False
     
-    async def handleTicketPage(self, url, retry=False):
+    async def handleTicketPage(self, url, retry=False, index=0):
         try:
-            isSuccess, response = await self.apiRequest(url=url)
+            isSuccess, response = await self.apiRequest(url=url, index=index)
             if isSuccess:
                 print("進入選票頁面")
                 soup = BeautifulSoup(response, "lxml")
-                lineupSuccess, ticketPrice = await self.find_lineup_params(url=url, soup=soup)
+                lineupSuccess, ticketPrice = await self.find_lineup_params(url=url, soup=soup, index=index)
                 if not retry:
                     seat = soup.find(class_="select-area").text
                     start = seat.find("所選擇區域")  # 找到 "所選擇區域" 的位置
@@ -123,19 +124,19 @@ class TixCraftBot:
             print(f"Error processing {url}: {e}")
             return False
 
-    async def downloadImage(self, soup):
+    async def downloadImage(self, soup, index=0):
         captcha_img = soup.find(id="TicketForm_verifyCode-image").get('src')
         captcha_img_url = f"https://tixcraft.com{captcha_img}"
         # v_value = captcha_img.split("v=")[-1].split(".")[0]
         # filename = os.path.join("image", f"{v_value}.png")
-        isSuccess, image_data = await self.apiRequest(url=captcha_img_url, type="image")
+        isSuccess, image_data = await self.apiRequest(url=captcha_img_url, type="image", index=index)
         return BytesIO(image_data)
 
-    async def find_lineup_params(self, url, soup):
+    async def find_lineup_params(self, url, soup, index=0):
         choose = soup.find(class_="form-select mobile-select")
 
         if choose:
-            image_data = await self.downloadImage(soup=soup)
+            image_data = await self.downloadImage(soup=soup, index=index)
             print("下載圖片完成")
 
             csrf = soup.find(id='form-ticket-ticket').find(attrs={"name": "_csrf"}).get('value')
@@ -154,7 +155,7 @@ class TixCraftBot:
                 f"TicketForm[verifyCode]": verifyCode,
                 f"TicketForm[agree]": agree,
             }
-            isSuccess = await self.sendTickets(post_data=post_data, url=url)
+            isSuccess = await self.sendTickets(post_data=post_data, url=url, index=index)
             # 等待結果並獲取回傳值
             return isSuccess, ticketPrice
         else:
@@ -176,15 +177,15 @@ class TixCraftBot:
                     # 將找到的 JSON 字串轉換為字典
                     area_url_list_json = match.group(1)
                     area_url_list = json.loads(area_url_list_json)
-
-                    # 從哪邊開始抓
-                    maxSeatsHandle = list(islice(area_url_list.items(), 1))
                     
                     seatsTasks = []
-                    for key, url in maxSeatsHandle:
-                        print(url)
-                        task = asyncio.create_task(self.handleTicketPage(url=url))
-                        seatsTasks.append(task)
+                    # for index, cookie in enumerate(self.config['cookie']):
+                    # 從哪邊開始抓
+                    lockedSeat = list(area_url_list.items())[1]
+                    uid, url = lockedSeat
+                    print(url)
+                    task = asyncio.create_task(self.handleTicketPage(url=url, index=1))
+                    seatsTasks.append(task)
                                                 
                     await asyncio.gather(*seatsTasks)
 
@@ -193,24 +194,23 @@ class TixCraftBot:
         else:
             print('請求失敗')
 
-    async def apiRequest(self, url, type="text", method="get", data=""):
-        cookie = self.config['cookie'][0]
-        sss = f"SID={cookie['SID']}; _csrf={cookie['_csrf']}"
+    async def apiRequest(self, url, type="text", method="get", data="", index=0):
+        cookie = self.config['cookie'][index]
+        token = f"SID={cookie['SID']}; _csrf={cookie['_csrf']}"
 
         if method == "post":
             headers = {
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Origin": "https://tixcraft.com",
                 "Referer": url,
-                "Cookie": sss,
+                "Cookie": token,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
                 "Accept-Encoding": "gzip, deflate, br, zstd",
                 "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
             }
         else:
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-                "Cookie": sss,
+                "Cookie": token,
             }
         async with aiohttp.ClientSession() as session:
             request_kwargs = {"url": url, "headers": headers}
