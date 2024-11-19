@@ -17,7 +17,8 @@
         "cookie": [
             {
                 "SID": "tg3dfq2qo8a5gaoh0jhm1fiu52", 
-                "_csrf": "b59d9f1cbf1d85200e4ed46dfb035349c2d2bd8fdfc250f01f65b6d5edd9e3f3a%3A2%3A%7Bi%3A0%3Bs%3A5%3A%22_csrf%22%3Bi%3A1%3Bs%3A32%3A%22EtPEsRxdHJ0LVJEdERkFU18LM_4l1vn_%22%3B%7D"
+                "_csrf":"a611ef3c277a2422a17cffd2e54bca349a0954c5a756802d3c2620969fc93263a%3A2%3A%7Bi%3A0%3Bs%3A5%3A%22_csrf%22%3Bi%3A1%3Bs%3A32%3A%220FKgO3naQUXm7Ai9C8Fwg8CvjY--ieeW%22%3B%7D",
+                "selectedIndex": 0
             }
         ]
     }
@@ -26,3 +27,4 @@
 **其他**
     - 日期只能選擇一天
     - 進入到拓元網站後登入會員，複製登入會員後的cookie sid及_csrf token 到config.json。
+    - selectedIndex為當前的可選座位的從上到下的第幾個index
