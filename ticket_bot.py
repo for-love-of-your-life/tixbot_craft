@@ -179,13 +179,13 @@ class TixCraftBot:
                     area_url_list = json.loads(area_url_list_json)
                     
                     seatsTasks = []
-                    # for index, cookie in enumerate(self.config['cookie']):
-                    # 從哪邊開始抓
-                    lockedSeat = list(area_url_list.items())[1]
-                    uid, url = lockedSeat
-                    print(url)
-                    task = asyncio.create_task(self.handleTicketPage(url=url, index=1))
-                    seatsTasks.append(task)
+                    for index, cookie in enumerate(self.config['cookie']):
+                        # 從哪邊開始抓
+                        lockedSeat = list(area_url_list.items())[cookie['selectedIndex']]
+                        uid, url = lockedSeat
+                        print(url)
+                        task = asyncio.create_task(self.handleTicketPage(url=url, index=index))
+                        seatsTasks.append(task)
                                                 
                     await asyncio.gather(*seatsTasks)
 
@@ -260,20 +260,19 @@ class TixCraftBot:
 if __name__ == "__main__":
     bot = TixCraftBot()
     asyncio.run(bot.getAllDate())
-    asyncio.run(bot.run())
 
-    # while True:
-    #     now = datetime.now()
-    #     # 檢查時間是否達到 3 點 0 分 1 秒
-    #     if now.hour == 1 and now.minute >= 18 and now.second >= 1:
-    #         try:
-    #             asyncio.run(bot.run())
-    #             break
-    #         except Exception as e:
-    #             logger.error(f"程式執行失敗: {str(e)}")
-    #             input("\n按 Enter 鍵結束程式...")
-    #         # 等待一天後再檢查，以免在當天重複執行
-    #         time.sleep(86400)  # 86400 秒 = 24 小時
-    #     else:
-    #         # 確保每秒檢查一次，避免錯過目標時間
-    #         time.sleep(0.2)
+    while True:
+        now = datetime.now()
+        # 檢查時間是否達到 3 點 0 分 1 秒
+        if now.hour == 12 and now.minute >= 30 and now.second >= 1:
+            try:
+                asyncio.run(bot.run())
+                break
+            except Exception as e:
+                logger.error(f"程式執行失敗: {str(e)}")
+                input("\n按 Enter 鍵結束程式...")
+            # 等待一天後再檢查，以免在當天重複執行
+            time.sleep(86400)  # 86400 秒 = 24 小時
+        else:
+            # 確保每秒檢查一次，避免錯過目標時間
+            time.sleep(0.2)
