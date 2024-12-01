@@ -8,9 +8,6 @@ from bs4 import BeautifulSoup
 import re
 import aiohttp
 import asyncio
-from itertools import islice
-import requests
-import os
 from datetime import datetime
 from io import BytesIO
 
@@ -53,18 +50,17 @@ class TixCraftBot:
     async def sendCheck(self, index=0):
         isSuccess, response = await self.apiRequest('https://tixcraft.com/ticket/check', type="json", index=index)
         if isSuccess:
-            if "您的選購條件已無足夠" in response.get('message'):
-                print("選購條件不足")
-                return False
-            elif "已超過每筆訂單張數限制" in response.get('message'):
-                print("已超過每筆訂單張數限制")
-                return False
+            if response.get('waiting') == True:
+                print(f"等候{response.get('time')}秒")
+                await asyncio.sleep(int(response.get('time')))
+                return await self.sendCheck(index=index)
             else:
-                # 第一次進來成功後就需要接下去處理下一隻api 了
-                if response.get('waiting') == True:
-                    print(f"等候{response.get('time')}秒")
-                    await asyncio.sleep(int(response.get('time')))
-                    return await self.sendCheck(index=index)
+                if "您的選購條件已無足夠" in response.get('message'):
+                    print("選購條件不足")
+                    return False
+                elif "已超過每筆訂單張數限制" in response.get('message'):
+                    print("已超過每筆訂單張數限制")
+                    return False
                 else:
                     if "即將前往結帳，請勿進行任何操作" in response.get('message'):
                         return True
@@ -77,7 +73,6 @@ class TixCraftBot:
         isSuccess, response = await self.apiRequest(url=url, method="post", data=post_data, index=index)
 
         if isSuccess:
-            print()
             soup = BeautifulSoup(response, "lxml")
             scripts = soup.find_all("script")
             if "您所輸入的驗證碼不正確，請重新輸入" in scripts[3].text:
@@ -127,8 +122,6 @@ class TixCraftBot:
     async def downloadImage(self, soup, index=0):
         captcha_img = soup.find(id="TicketForm_verifyCode-image").get('src')
         captcha_img_url = f"https://tixcraft.com{captcha_img}"
-        # v_value = captcha_img.split("v=")[-1].split(".")[0]
-        # filename = os.path.join("image", f"{v_value}.png")
         isSuccess, image_data = await self.apiRequest(url=captcha_img_url, type="image", index=index)
         return BytesIO(image_data)
 
@@ -167,30 +160,40 @@ class TixCraftBot:
         isSuccess, response = await self.apiRequest(url=selected_url)
 
         if isSuccess:
-            soup = BeautifulSoup(response, "lxml")
-            scripts = soup.find_all("script")
-            if len(scripts) >= 20:
-                script_content = scripts[20].string
-                match = re.search(r'var areaUrlList\s*=\s*(\{.*?\});', script_content, re.DOTALL)
+            if self.config['No_selection']:
+                seatsTasks = []
+                for index, cookie in enumerate(self.config['cookie']):
+                    # 從哪邊開始抓
+                    lockedSeat = list(area_url_list.items())[cookie['selectedIndex']]
+                    uid, url = lockedSeat
+                    print(url)
+                    task = asyncio.create_task(self.handleTicketPage(url=selected_url, index=index))
+                    seatsTasks.append(task)
+            else:
+                soup = BeautifulSoup(response, "lxml")
+                scripts = soup.find_all("script")
+                if len(scripts) >= 20:
+                    script_content = scripts[20].string
+                    match = re.search(r'var areaUrlList\s*=\s*(\{.*?\});', script_content, re.DOTALL)
 
-                if match:
-                    # 將找到的 JSON 字串轉換為字典
-                    area_url_list_json = match.group(1)
-                    area_url_list = json.loads(area_url_list_json)
-                    
-                    seatsTasks = []
-                    for index, cookie in enumerate(self.config['cookie']):
-                        # 從哪邊開始抓
-                        lockedSeat = list(area_url_list.items())[cookie['selectedIndex']]
-                        uid, url = lockedSeat
-                        print(url)
-                        task = asyncio.create_task(self.handleTicketPage(url=url, index=index))
-                        seatsTasks.append(task)
-                                                
-                    await asyncio.gather(*seatsTasks)
+                    if match:
+                        # 將找到的 JSON 字串轉換為字典
+                        area_url_list_json = match.group(1)
+                        area_url_list = json.loads(area_url_list_json)
+                        
+                        seatsTasks = []
+                        for index, cookie in enumerate(self.config['cookie']):
+                            # 從哪邊開始抓
+                            lockedSeat = list(area_url_list.items())[cookie['selectedIndex']]
+                            uid, url = lockedSeat
+                            print(url)
+                            task = asyncio.create_task(self.handleTicketPage(url=url, index=index))
+                            seatsTasks.append(task)
+                                                    
+                        await asyncio.gather(*seatsTasks)
 
-                else:
-                    print("未找到 areaUrlList。")
+                    else:
+                        print("未找到 areaUrlList。")
         else:
             print('請求失敗')
 
@@ -260,19 +263,20 @@ class TixCraftBot:
 if __name__ == "__main__":
     bot = TixCraftBot()
     asyncio.run(bot.getAllDate())
+    asyncio.run(bot.run())
 
-    while True:
-        now = datetime.now()
-        # 檢查時間是否達到 3 點 0 分 1 秒
-        if now.hour == 12 and now.minute >= 30 and now.second >= 1:
-            try:
-                asyncio.run(bot.run())
-                break
-            except Exception as e:
-                logger.error(f"程式執行失敗: {str(e)}")
-                input("\n按 Enter 鍵結束程式...")
-            # 等待一天後再檢查，以免在當天重複執行
-            time.sleep(86400)  # 86400 秒 = 24 小時
-        else:
-            # 確保每秒檢查一次，避免錯過目標時間
-            time.sleep(0.2)
+    # while True:
+    #     now = datetime.now()
+    #     # 檢查時間是否達到 3 點 0 分 1 秒
+    #     if now.hour == 12 and now.minute >= 30 and now.second >= 1:
+    #         try:
+    #             asyncio.run(bot.run())
+    #             break
+    #         except Exception as e:
+    #             logger.error(f"程式執行失敗: {str(e)}")
+    #             input("\n按 Enter 鍵結束程式...")
+    #         # 等待一天後再檢查，以免在當天重複執行
+    #         time.sleep(86400)  # 86400 秒 = 24 小時
+    #     else:
+    #         # 確保每秒檢查一次，避免錯過目標時間
+    #         time.sleep(0.2)

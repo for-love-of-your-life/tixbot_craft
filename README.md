@@ -12,8 +12,8 @@
     {
         "activity_url": "https://tixcraft.com/activity/game/24_p12tpdome",
         "ticket_quantity": 2,
-        "target_price": "3800",
         "date": "2024/11/14",
+        "No_selection": true,
         "cookie": [
             {
                 "SID": "tg3dfq2qo8a5gaoh0jhm1fiu52", 
@@ -24,7 +24,10 @@
     }
 ```
 
-**其他**
-    - 日期只能選擇一天
-    - 進入到拓元網站後登入會員，複製登入會員後的cookie sid及_csrf token 到config.json。
-    - selectedIndex為當前的可選座位的從上到下的第幾個index
+6. config.json 參數解析
+- **activity_url** : 表演的網址。
+- **ticket_quantity** : 購票數量。
+- **date** : 表演日期。
+- **No_selection** : 若不需要選位時則填入true。
+- **SID&_csrf** : 進入到拓元網站後登入會員，複製登入會員後的cookie sid及_csrf token 到config.json。
+- **selectedIndex** : selectedIndex為當前的可選座位的從上到下的第幾個index。
